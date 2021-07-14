@@ -28,7 +28,7 @@ struct glfw {
 };
 
 struct window {
-    static window
+    [[nodiscard]] static window
     create()
     {
         auto w = glfwCreateWindow(800, 600, "LearnOpenGL", nullptr, nullptr);
@@ -54,7 +54,7 @@ struct window {
 };
 
 struct glad {
-    static glad
+    [[nodiscard]] static glad
     initialise()
     {
         return {static_cast<bool>(gladLoadGLLoader((GLADloadproc) glfwGetProcAddress))};
@@ -82,6 +82,67 @@ struct viewport {
     framebuffer_size_callback(GLFWwindow *, int width, int height)
     {
         glViewport(0, 0, width, height);
+    }
+};
+
+struct vertices_buffer_object {
+    static vertices_buffer_object
+    create(int size_vertices, float *vertices)
+    {
+        unsigned int VBO;
+        glGenBuffers(1, &VBO);
+        glBindBuffer(GL_ARRAY_BUFFER, VBO);
+        glBufferData(GL_ARRAY_BUFFER, size_vertices, vertices, GL_STATIC_DRAW);
+        return {};
+    }
+};
+
+struct vertex_shader {
+    [[nodiscard]] static vertex_shader
+    create() {
+        const char *vertexShaderSource = R"(
+#version 330 core
+layout (location = 0) in vec3 aPos;
+
+void main()
+{
+    gl_Position = vec4(aPos.x, aPos.y, aPos.z, 1.0);
+}
+)";
+        unsigned int vertexShader = glCreateShader(GL_VERTEX_SHADER);
+        glShaderSource(vertexShader, 1, &vertexShaderSource, nullptr);
+        glCompileShader(vertexShader);
+        return {vertexShader};
+    }
+    unsigned int shader_id;
+    [[nodiscard]] bool check() const
+    {
+        int success;
+        char info_log[512];
+        glGetShaderiv(shader_id, GL_COMPILE_STATUS, &success);
+        if (!success) {
+            glGetShaderInfoLog(shader_id, sizeof info_log, nullptr, info_log);
+            std::cerr << "ERROR::SHADER::VERTEX::COMPILATION_FAILED\n" << info_log << std::endl;
+        }
+        return static_cast<bool>(success);
+    }
+};
+
+struct triangle {
+    [[nodiscard]] static triangle
+    create()
+    {
+        float vertices[] = {
+            -0.5f, -0.5f, 0.0f,
+            0.5f, -0.5f, 0.0f,
+            0.0f, 0.5f, 0.0f};
+        vertices_buffer_object::create(sizeof vertices, vertices);
+        auto vertex_shader = vertex_shader::create();
+        return {vertex_shader};
+    }
+    vertex_shader vertex_shader;
+    [[nodiscard]] bool check() const {
+        return vertex_shader.check();
     }
 };
 
@@ -127,6 +188,9 @@ main()
     if (!glad.check()) return -1;
 
     viewport::initialise(window);
+
+    auto triangle = triangle::create();
+    if (!triangle.check()) return -1;
 
     render_loop(window);
 
