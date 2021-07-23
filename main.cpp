@@ -97,32 +97,27 @@ struct vertices_buffer_object {
     }
 };
 
-struct vertex_shader {
-    [[nodiscard]] static vertex_shader
-    create() {
-        const char *vertexShaderSource = R"(
-#version 330 core
-layout (location = 0) in vec3 aPos;
-
-void main()
-{
-    gl_Position = vec4(aPos.x, aPos.y, aPos.z, 1.0);
-}
-)";
-        unsigned int vertexShader = glCreateShader(GL_VERTEX_SHADER);
-        glShaderSource(vertexShader, 1, &vertexShaderSource, nullptr);
-        glCompileShader(vertexShader);
-        return {vertexShader};
+struct shader {
+    [[nodiscard]] static shader
+    create(const char *const name, GLenum shaderType, const char *const shaderSource)
+    {
+        unsigned int shader_id = glCreateShader(shaderType);
+        glShaderSource(shader_id, 1, &shaderSource, nullptr);
+        glCompileShader(shader_id);
+        return {shader_id, name};
     }
     unsigned int shader_id;
-    [[nodiscard]] bool check() const
+    const char *const name;
+    [[nodiscard]] bool
+    check() const
     {
         int success;
         char info_log[512];
         glGetShaderiv(shader_id, GL_COMPILE_STATUS, &success);
         if (!success) {
             glGetShaderInfoLog(shader_id, sizeof info_log, nullptr, info_log);
-            std::cerr << "ERROR::SHADER::VERTEX::COMPILATION_FAILED\n" << info_log << std::endl;
+            std::cerr << "ERROR::SHADER::" << name << "::COMPILATION_FAILED\n"
+                      << info_log << std::endl;
         }
         return static_cast<bool>(success);
     }
@@ -137,12 +132,32 @@ struct triangle {
             0.5f, -0.5f, 0.0f,
             0.0f, 0.5f, 0.0f};
         vertices_buffer_object::create(sizeof vertices, vertices);
-        auto vertex_shader = vertex_shader::create();
-        return {vertex_shader};
+        auto vertex_shader = shader::create("triangle_vertex", GL_VERTEX_SHADER, R"(
+#version 330 core
+layout (location = 0) in vec3 aPos;
+
+void main()
+{
+    gl_Position = vec4(aPos.x, aPos.y, aPos.z, 1.0);
+}
+)");
+        auto fragment_shader = shader::create("triangle_fragment", GL_FRAGMENT_SHADER, R"(
+#version 330 core
+out vec4 FragColor;
+
+void main()
+{
+    FragColor = vec4(1.0f, 0.5f, 0.2f, 1.0f);
+}
+)");
+        return {vertex_shader, fragment_shader};
     }
-    vertex_shader vertex_shader;
-    [[nodiscard]] bool check() const {
-        return vertex_shader.check();
+    shader vertex_shader;
+    shader fragment_shader;
+    [[nodiscard]] bool
+    check() const
+    {
+        return vertex_shader.check() && fragment_shader.check();
     }
 };
 
