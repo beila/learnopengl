@@ -1,9 +1,17 @@
 #include <glad/glad.h>
+
 #include <GLFW/glfw3.h>
 #include <iostream>
+#include <vector>
 
 namespace
 {
+
+struct guard {
+    guard(std::function<void()> &&closer) : closer(closer) {}// NOLINT(google-explicit-constructor)
+    std::function<void()> closer;
+    ~guard() { closer(); }
+};
 
 struct glfw {
     static glfw
@@ -121,6 +129,49 @@ struct shader {
         }
         return static_cast<bool>(success);
     }
+    ~shader()
+    {
+        glDeleteShader(shader_id);
+    }
+};
+
+struct shader_program {
+    [[nodiscard]] static shader_program
+    create(std::vector<shader> &&shaders)
+    {
+        unsigned int shaderProgram;
+        shaderProgram = glCreateProgram();
+        std::for_each(shaders.begin(), shaders.end(), [&](const auto &s) { glAttachShader(shaderProgram, s.shader_id); });
+        glLinkProgram(shaderProgram);
+        return {shaderProgram, shaders};
+    }
+    unsigned int shader_program_id;
+    mutable std::vector<shader> shaders;
+    [[nodiscard]] bool
+    check() const
+    {
+        if (std::any_of(shaders.begin(), shaders.end(), [](const shader &s) { return !s.check(); }))
+            return false;
+        int success;
+        char info_log[512];
+        glGetProgramiv(shader_program_id, GL_COMPILE_STATUS, &success);
+        if (success == 0) {
+            glGetProgramInfoLog(shader_program_id, sizeof info_log, nullptr, info_log);
+            std::cerr << "ERROR::SHADER::PROGRAM::COMPILATION_FAILED\n"
+                      << info_log << std::endl;
+        }
+        return static_cast<bool>(success);
+    }
+    [[nodiscard]] bool
+    use() const
+    {
+        guard _ = std::function([this]() { shaders.clear(); });
+        if (check()) {
+            glUseProgram(shader_program_id);
+            return true;
+        }
+        return false;
+    }
 };
 
 struct triangle {
@@ -150,14 +201,14 @@ void main()
     FragColor = vec4(1.0f, 0.5f, 0.2f, 1.0f);
 }
 )");
-        return {vertex_shader, fragment_shader};
+        auto shader_program = shader_program::create({vertex_shader, fragment_shader});
+        return {shader_program};
     }
-    shader vertex_shader;
-    shader fragment_shader;
+    shader_program shader_program;
     [[nodiscard]] bool
-    check() const
+    use() const
     {
-        return vertex_shader.check() && fragment_shader.check();
+        return shader_program.use();
     }
 };
 
@@ -205,7 +256,7 @@ main()
     viewport::initialise(window);
 
     auto triangle = triangle::create();
-    if (!triangle.check()) return -1;
+    if (!triangle.use()) return -1;
 
     render_loop(window);
 
