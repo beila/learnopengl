@@ -93,15 +93,55 @@ struct viewport {
     }
 };
 
-struct vertices_buffer_object {
-    static vertices_buffer_object
-    create(int size_vertices, float *vertices)
+struct vertex_buffer {
+    static vertex_buffer
+    create(std::vector<float> &&vertices)
     {
         unsigned int VBO;
         glGenBuffers(1, &VBO);
-        glBindBuffer(GL_ARRAY_BUFFER, VBO);
-        glBufferData(GL_ARRAY_BUFFER, size_vertices, vertices, GL_STATIC_DRAW);
-        return {};
+        return {
+            VBO,
+            static_cast<GLsizeiptr>(vertices.size() * sizeof(float)),
+            std::move(vertices),
+        };
+    }
+    unsigned int id;
+    GLsizeiptr size;
+    std::vector<float> vertices;
+    void
+    bind() const
+    {
+        glBindBuffer(GL_ARRAY_BUFFER, id);
+        glBufferData(GL_ARRAY_BUFFER, size, vertices.data(), GL_STATIC_DRAW);
+    }
+    void
+    unbind() const// NOLINT(readability-convert-member-functions-to-static)
+    {
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
+};
+
+struct vertex_array {
+    static vertex_array
+    create(vertex_buffer &&buffer)
+    {
+        unsigned int id;
+        glGenVertexArrays(1, &id);
+        glBindVertexArray(id);
+        buffer.bind();
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), nullptr);
+        glEnableVertexAttribArray(0);
+        buffer.unbind();
+        glBindVertexArray(0);
+        return {id, buffer};
+    }
+    unsigned int id;
+    vertex_buffer buffer;
+    void
+    draw() const
+    {
+        glBindVertexArray(id);
+        glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(buffer.size / 3));
     }
 };
 
@@ -150,6 +190,7 @@ struct shader_program {
     [[nodiscard]] bool
     check() const
     {
+        guard _ = std::function([this]() { shaders.clear(); });
         if (std::any_of(shaders.begin(), shaders.end(), [](const shader &s) { return !s.check(); }))
             return false;
         int success;
@@ -162,15 +203,10 @@ struct shader_program {
         }
         return static_cast<bool>(success);
     }
-    [[nodiscard]] bool
+    void
     use() const
     {
-        guard _ = std::function([this]() { shaders.clear(); });
-        if (check()) {
-            glUseProgram(shader_program_id);
-            return true;
-        }
-        return false;
+        glUseProgram(shader_program_id);
     }
 };
 
@@ -178,11 +214,10 @@ struct triangle {
     [[nodiscard]] static triangle
     create()
     {
-        float vertices[] = {
-            -0.5f, -0.5f, 0.0f,
-            0.5f, -0.5f, 0.0f,
-            0.0f, 0.5f, 0.0f};
-        vertices_buffer_object::create(sizeof vertices, vertices);
+        auto vertex_buffer = vertex_buffer::create({-0.5f, -0.5f, 0.0f,
+                                                    0.5f, -0.5f, 0.0f,
+                                                    0.0f, 0.5f, 0.0f});
+        auto vertex_array = vertex_array::create(std::move(vertex_buffer));
         auto vertex_shader = shader::create("triangle_vertex", GL_VERTEX_SHADER, R"(
 #version 330 core
 layout (location = 0) in vec3 aPos;
@@ -202,13 +237,20 @@ void main()
 }
 )");
         auto shader_program = shader_program::create({vertex_shader, fragment_shader});
-        return {shader_program};
+        return {shader_program, vertex_array};
     }
     shader_program shader_program;
+    vertex_array vertex_array;
     [[nodiscard]] bool
-    use() const
+    check() const
     {
-        return shader_program.use();
+        return shader_program.check();
+    }
+    void
+    draw() const
+    {
+        shader_program.use();
+        vertex_array.draw();
     }
 };
 
@@ -228,12 +270,13 @@ clear_color_buffer()
 }
 
 void
-render_loop(const window &w)
+render_loop(const window &w, const triangle &triangle)
 {
     while (!glfwWindowShouldClose(w.window)) {
         process_input(w);
 
         clear_color_buffer();
+        triangle.draw();
 
         glfwSwapBuffers(w.window);
         glfwPollEvents();
@@ -256,9 +299,9 @@ main()
     viewport::initialise(window);
 
     auto triangle = triangle::create();
-    if (!triangle.use()) return -1;
+    if (!triangle.check()) return -1;
 
-    render_loop(window);
+    render_loop(window, triangle);
 
     return 0;
 }
