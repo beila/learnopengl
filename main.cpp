@@ -26,7 +26,7 @@ struct glfw {
         }
         return {success};
     }
-    bool valid;
+    const bool valid;
     ~glfw()
     {
         if (valid) {
@@ -41,7 +41,7 @@ struct glfw_window {
     {
         return {glfwCreateWindow(800, 600, "LearnOpenGL", nullptr, nullptr)};
     }
-    GLFWwindow *handle;
+    GLFWwindow *const handle;
     [[nodiscard]] bool
     make_current() const
     {
@@ -61,7 +61,7 @@ struct glad {
     {
         return {static_cast<bool>(gladLoadGLLoader((GLADloadproc) glfwGetProcAddress))};
     }
-    bool valid;
+    const bool valid;
     [[nodiscard]] bool
     check() const
     {
@@ -94,7 +94,7 @@ struct viewport {
 
 struct vertex_buffer {
     static vertex_buffer
-    create(std::vector<float> &&vertices)
+    create(std::vector<const float> &&vertices)
     {
         unsigned int VBO;
         glGenBuffers(1, &VBO);
@@ -104,9 +104,9 @@ struct vertex_buffer {
             std::move(vertices),
         };
     }
-    unsigned int id;
-    GLsizeiptr size;
-    std::vector<float> vertices;
+    const unsigned int id;
+    const GLsizeiptr size;
+    const std::vector<const float> vertices;
     void
     bind() const
     {
@@ -134,8 +134,8 @@ struct vertex_array {
         glBindVertexArray(0);
         return {id, buffer};
     }
-    unsigned int id;
-    vertex_buffer buffer;
+    const unsigned int id;
+    const vertex_buffer buffer;
     void
     draw() const
     {
@@ -146,15 +146,15 @@ struct vertex_array {
 
 struct shader {
     [[nodiscard]] static shader
-    create(const char *const name, GLenum shaderType, const char *const shaderSource)
+    create(const std::string& name, GLenum shaderType, const char *const shaderSource)
     {
         unsigned int shader_id = glCreateShader(shaderType);
         glShaderSource(shader_id, 1, &shaderSource, nullptr);
         glCompileShader(shader_id);
         return {shader_id, name};
     }
-    unsigned int shader_id;
-    const char *const name;
+    const unsigned int shader_id;
+    const std::string name;
     [[nodiscard]] bool
     check() const
     {
@@ -176,7 +176,7 @@ struct shader {
 
 struct shader_program {
     [[nodiscard]] static shader_program
-    create(std::vector<shader> &&shaders)
+    create(std::vector<const shader> &&shaders)
     {
         unsigned int shaderProgram;
         shaderProgram = glCreateProgram();
@@ -184,8 +184,8 @@ struct shader_program {
         glLinkProgram(shaderProgram);
         return {shaderProgram, shaders};
     }
-    unsigned int shader_program_id;
-    mutable std::vector<shader> shaders;
+    const unsigned int shader_program_id;
+    mutable std::vector<const shader> shaders;
     [[nodiscard]] bool
     check() const
     {
@@ -236,8 +236,8 @@ void main()
         auto shader_program = shader_program::create({vertex_shader, fragment_shader});
         return {shader_program, vertex_array};
     }
-    shader_program shader_program;
-    vertex_array vertex_array;
+    const shader_program shader_program;
+    const vertex_array vertex_array;
     [[nodiscard]] bool
     check() const
     {
