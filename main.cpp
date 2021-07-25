@@ -35,35 +35,29 @@ struct glfw {
     }
 };
 
-struct window {
-    [[nodiscard]] static window
-    create()
+struct glfw_window {
+    [[nodiscard]] static glfw_window
+    create(const glfw &)
     {
-        auto w = glfwCreateWindow(800, 600, "LearnOpenGL", nullptr, nullptr);
-        if (w) {
-            glfwMakeContextCurrent(w);
-        }
-        return {w, 800, 600};
+        return {glfwCreateWindow(800, 600, "LearnOpenGL", nullptr, nullptr)};
     }
-    GLFWwindow *window;
-    int width;
-    int height;
+    GLFWwindow *handle;
     [[nodiscard]] bool
     make_current() const
     {
-        if (window) {
-            glfwMakeContextCurrent(window);
+        if (handle) {
+            glfwMakeContextCurrent(handle);
         }
         else {
             std::cerr << "Failed to create GLFW window" << std::endl;
         }
-        return window != nullptr;
+        return handle != nullptr;
     }
 };
 
 struct glad {
     [[nodiscard]] static glad
-    initialise()
+    initialise(const glfw &)
     {
         return {static_cast<bool>(gladLoadGLLoader((GLADloadproc) glfwGetProcAddress))};
     }
@@ -80,16 +74,21 @@ struct glad {
 
 struct viewport {
     static viewport
-    initialise(const window &w)
+    initialise(const glfw_window &w)
     {
-        glViewport(0, 0, w.width, w.height);
-        glfwSetFramebufferSizeCallback(w.window, viewport::framebuffer_size_callback);
-        return {};
+        glfwSetFramebufferSizeCallback(w.handle, viewport::framebuffer_size_callback);
+        return {w};
     }
+    const glfw_window &window;
     static void
     framebuffer_size_callback(GLFWwindow *, int width, int height)
     {
+//        std::cout << "glViewport(0, 0, " << width << ", " << height << ");" << std::endl;
         glViewport(0, 0, width, height);
+    }
+    ~viewport()
+    {
+        glfwSetFramebufferSizeCallback(window.handle, nullptr);
     }
 };
 
@@ -221,7 +220,6 @@ struct triangle {
         auto vertex_shader = shader::create("triangle_vertex", GL_VERTEX_SHADER, R"(
 #version 330 core
 layout (location = 0) in vec3 aPos;
-
 void main()
 {
     gl_Position = vec4(aPos.x, aPos.y, aPos.z, 1.0);
@@ -230,7 +228,6 @@ void main()
         auto fragment_shader = shader::create("triangle_fragment", GL_FRAGMENT_SHADER, R"(
 #version 330 core
 out vec4 FragColor;
-
 void main()
 {
     FragColor = vec4(1.0f, 0.5f, 0.2f, 1.0f);
@@ -255,10 +252,10 @@ void main()
 };
 
 void
-process_input(const window &w)
+process_input(const glfw_window &window)
 {
-    if (glfwGetKey(w.window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
-        glfwSetWindowShouldClose(w.window, true);
+    if (glfwGetKey(window.handle, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
+        glfwSetWindowShouldClose(window.handle, true);
     }
 }
 
@@ -270,15 +267,15 @@ clear_color_buffer()
 }
 
 void
-render_loop(const window &w, const triangle &triangle)
+render_loop(const glfw_window &window, const triangle &triangle)
 {
-    while (!glfwWindowShouldClose(w.window)) {
-        process_input(w);
+    while (!glfwWindowShouldClose(window.handle)) {
+        process_input(window);
 
         clear_color_buffer();
         triangle.draw();
 
-        glfwSwapBuffers(w.window);
+        glfwSwapBuffers(window.handle);
         glfwPollEvents();
     }
 }
@@ -290,10 +287,10 @@ main()
 {
     auto glfw = glfw::instantiate();
 
-    auto window = window::create();
+    auto window = glfw_window::create(glfw);
     if (!window.make_current()) return -1;
 
-    auto glad = glad::initialise();
+    auto glad = glad::initialise(glfw);
     if (!glad.check()) return -1;
 
     viewport::initialise(window);
