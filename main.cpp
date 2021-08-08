@@ -2,19 +2,34 @@
 
 #include <GLFW/glfw3.h>
 #include <iostream>
+#include <utility>
 #include <vector>
 
 namespace
 {
 
+template<typename T>
+concept Callable = requires(T t)
+{
+    t();
+};
+
+template<Callable C, Callable O = void()>
 struct guard {
-    guard(std::function<void()> &&closer) : closer(closer) {}// NOLINT(google-explicit-constructor)
-    guard(std::function<void()> &&opener, std::function<void()> &&closer) : closer(closer) { opener(); }
-    std::function<void()> closer;
+    guard(C &&closer) : closer(closer) {}// NOLINT(google-explicit-constructor)
+    guard(O &&opener, C &&closer) : closer(std::move(closer)) { opener(); }
+    C closer;
     ~guard() { closer(); }
 };
 
-struct glfw {
+struct non_copyable {
+    non_copyable() = default;
+    non_copyable(non_copyable const &) = delete;
+    non_copyable &
+    operator=(non_copyable const &) = delete;
+};
+
+struct glfw: private non_copyable {
     static glfw
     instantiate()
     {
@@ -25,9 +40,10 @@ struct glfw {
             glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
             glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);// needed for mac
         }
-        return {success};
+        return glfw{success};
     }
     const bool valid;
+    explicit glfw(bool valid) : valid(valid) {}
     ~glfw()
     {
         if (valid) {
@@ -73,18 +89,18 @@ struct glad {
     }
 };
 
-struct viewport {
+struct viewport: private non_copyable {
     static viewport
     initialise(const glfw_window &w)
     {
         glfwSetFramebufferSizeCallback(w.handle, viewport::framebuffer_size_callback);
-        return {w};
+        return viewport{w};
     }
     const glfw_window &window;
+    explicit viewport(const glfw_window &w) : window(w){};
     static void
     framebuffer_size_callback(GLFWwindow *, int width, int height)
     {
-//        std::cout << "glViewport(0, 0, " << width << ", " << height << ");" << std::endl;
         glViewport(0, 0, width, height);
     }
     ~viewport()
@@ -105,7 +121,7 @@ requires(array_type == GL_ARRAY_BUFFER || array_type == GL_ELEMENT_ARRAY_BUFFER)
     const unsigned int id;
     const GLsizei count;
     const std::vector<const T> data;
-    [[nodiscard]] guard
+    [[nodiscard]] auto
     bind() const
     {
         glBindBuffer(array_type, id);
@@ -164,17 +180,18 @@ struct element_array {
     }
 };
 
-struct pipeline_shader {
-    [[nodiscard]] static pipeline_shader
+struct pipeline_shader: private non_copyable {
+    [[nodiscard]] static std::unique_ptr<pipeline_shader>
     create(const std::string &name, GLenum shaderType, const char *const shaderSource)
     {
         unsigned int shader_id = glCreateShader(shaderType);
         glShaderSource(shader_id, 1, &shaderSource, nullptr);
         glCompileShader(shader_id);
-        return {shader_id, name};
+        return std::make_unique<pipeline_shader>(shader_id, name);
     }
-    const unsigned int shader_id;
-    const std::string name;
+    unsigned int shader_id;
+    std::string name;
+    pipeline_shader(unsigned int shader_id, std::string name) : shader_id(shader_id), name(std::move(name)) {}
     [[nodiscard]] bool
     check() const
     {
@@ -196,21 +213,21 @@ struct pipeline_shader {
 
 struct shader {
     [[nodiscard]] static shader
-    create(std::vector<const pipeline_shader> &&shaders)
+    create(std::vector<std::unique_ptr<const pipeline_shader>> &&shaders)
     {
         unsigned int shaderProgram;
         shaderProgram = glCreateProgram();
-        std::for_each(shaders.begin(), shaders.end(), [&](const auto &s) { glAttachShader(shaderProgram, s.shader_id); });
+        std::for_each(shaders.begin(), shaders.end(), [&](const auto &s) { glAttachShader(shaderProgram, s->shader_id); });
         glLinkProgram(shaderProgram);
-        return {shaderProgram, shaders};
+        return {shaderProgram, std::move(shaders)};
     }
     const unsigned int shader_program_id;
-    mutable std::vector<const pipeline_shader> shaders;
+    mutable std::vector<std::unique_ptr<const pipeline_shader>> shaders;
     [[nodiscard]] bool
     check() const
     {
-        guard _ = std::function([this]() { shaders.clear(); });
-        if (std::any_of(shaders.begin(), shaders.end(), [](const pipeline_shader &s) { return !s.check(); }))
+        auto _ = guard{[this]() { shaders.clear(); }};
+        if (std::any_of(shaders.begin(), shaders.end(), [](const auto &s) { return !s->check(); }))
             return false;
         int success;
         char info_log[512];
@@ -233,23 +250,24 @@ struct triangle_shader {
     [[nodiscard]] static shader
     create()
     {
-        auto vertex_shader = pipeline_shader::create("triangle_vertex", GL_VERTEX_SHADER, R"(
+        std::vector<std::unique_ptr<const pipeline_shader>> v{};
+        v.push_back(pipeline_shader::create("triangle_vertex", GL_VERTEX_SHADER, R"(
 #version 330 core
 layout (location = 0) in vec3 aPos;
 void main()
 {
     gl_Position = vec4(aPos.x, aPos.y, aPos.z, 1.0);
 }
-        )");
-        auto fragment_shader = pipeline_shader::create("triangle_fragment", GL_FRAGMENT_SHADER, R"(
+        )"));
+        v.push_back(pipeline_shader::create("triangle_fragment", GL_FRAGMENT_SHADER, R"(
 #version 330 core
 out vec4 FragColor;
 void main()
 {
     FragColor = vec4(1.0f, 0.5f, 0.2f, 1.0f);
 }
-        )");
-        return shader::create({vertex_shader, fragment_shader});
+        )"));
+        return shader::create(std::move(v));
     }
 };
 
