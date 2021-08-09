@@ -109,7 +109,7 @@ struct viewport: private non_copyable {
     }
 };
 
-template<int array_type = GL_ARRAY_BUFFER, typename T = typename std::conditional<array_type == GL_ELEMENT_ARRAY_BUFFER, int, float>::type>
+template<GLenum array_type = GL_ARRAY_BUFFER, typename T = typename std::conditional<array_type == GL_ELEMENT_ARRAY_BUFFER, int, float>::type>
 requires(array_type == GL_ARRAY_BUFFER || array_type == GL_ELEMENT_ARRAY_BUFFER) struct buffer {
     static buffer
     create(std::vector<const T> &&data)
@@ -129,12 +129,14 @@ requires(array_type == GL_ARRAY_BUFFER || array_type == GL_ELEMENT_ARRAY_BUFFER)
         return guard{[]() { glBindBuffer(array_type, 0); }};
     }
 };
+using vertex_buffer = buffer<GL_ARRAY_BUFFER, float>;
+using element_buffer = buffer<GL_ELEMENT_ARRAY_BUFFER, int>;
 
 struct vertex_array {
     static vertex_array
     create(std::vector<const float> &&vertices)
     {
-        auto b = buffer<>::create(std::move(vertices));
+        auto b = vertex_buffer::create(std::move(vertices));
         unsigned int id;
         glGenVertexArrays(1, &id);
         auto _a = guard{[id]() { glBindVertexArray(id); }, []() { glBindVertexArray(0); }};
@@ -158,8 +160,8 @@ struct element_array {
     static element_array
     create(std::vector<const float> &&vertices, std::vector<const int> &&indices)
     {
-        auto vertex_buffer = buffer<>::create(std::move(vertices));
-        auto index_buffer = buffer<GL_ELEMENT_ARRAY_BUFFER>::create(std::move(indices));
+        auto vertex_buffer = vertex_buffer::create(std::move(vertices));
+        auto index_buffer = element_buffer::create(std::move(indices));
         unsigned int id;
         glGenVertexArrays(1, &id);
         auto _a = guard{[id]() { glBindVertexArray(id); }, []() { glBindVertexArray(0); }};
@@ -180,18 +182,19 @@ struct element_array {
     }
 };
 
-struct pipeline_shader: private non_copyable {
-    [[nodiscard]] static std::unique_ptr<pipeline_shader>
-    create(const std::string &name, GLenum shaderType, const char *const shaderSource)
+struct shader: private non_copyable {
+    template<GLenum shader_type>
+    requires(shader_type == GL_VERTEX_SHADER || shader_type == GL_FRAGMENT_SHADER)
+        [[nodiscard]] static std::unique_ptr<shader> create(const std::string &name, const char *const shaderSource)
     {
-        unsigned int shader_id = glCreateShader(shaderType);
+        unsigned int shader_id = glCreateShader(shader_type);
         glShaderSource(shader_id, 1, &shaderSource, nullptr);
         glCompileShader(shader_id);
-        return std::make_unique<pipeline_shader>(shader_id, name);
+        return std::make_unique<shader>(shader_id, name);
     }
     unsigned int shader_id;
     std::string name;
-    pipeline_shader(unsigned int shader_id, std::string name) : shader_id(shader_id), name(std::move(name)) {}
+    shader(unsigned int shader_id, std::string name) : shader_id(shader_id), name(std::move(name)) {}
     [[nodiscard]] bool
     check() const
     {
@@ -205,15 +208,15 @@ struct pipeline_shader: private non_copyable {
         }
         return static_cast<bool>(success);
     }
-    ~pipeline_shader()
+    ~shader()
     {
         glDeleteShader(shader_id);
     }
 };
 
-struct shader {
-    [[nodiscard]] static shader
-    create(std::vector<std::unique_ptr<const pipeline_shader>> &&shaders)
+struct shader_pipeline {
+    [[nodiscard]] static shader_pipeline
+    create(std::vector<std::unique_ptr<const shader>> &&shaders)
     {
         unsigned int shaderProgram;
         shaderProgram = glCreateProgram();
@@ -222,7 +225,7 @@ struct shader {
         return {shaderProgram, std::move(shaders)};
     }
     const unsigned int shader_program_id;
-    mutable std::vector<std::unique_ptr<const pipeline_shader>> shaders;
+    mutable std::vector<std::unique_ptr<const shader>> shaders;
     [[nodiscard]] bool
     check() const
     {
@@ -247,11 +250,11 @@ struct shader {
 };
 
 struct triangle_shader {
-    [[nodiscard]] static shader
+    [[nodiscard]] static shader_pipeline
     create()
     {
-        std::vector<std::unique_ptr<const pipeline_shader>> v{};
-        v.push_back(pipeline_shader::create("triangle_vertex", GL_VERTEX_SHADER, R"(
+        std::vector<std::unique_ptr<const shader>> v{};
+        v.push_back(shader::create<GL_VERTEX_SHADER>("triangle_vertex", R"(
 #version 330 core
 layout (location = 0) in vec3 aPos;
 void main()
@@ -259,7 +262,7 @@ void main()
     gl_Position = vec4(aPos.x, aPos.y, aPos.z, 1.0);
 }
         )"));
-        v.push_back(pipeline_shader::create("triangle_fragment", GL_FRAGMENT_SHADER, R"(
+        v.push_back(shader::create<GL_FRAGMENT_SHADER>("triangle_fragment", R"(
 #version 330 core
 out vec4 FragColor;
 void main()
@@ -267,7 +270,7 @@ void main()
     FragColor = vec4(1.0f, 0.5f, 0.2f, 1.0f);
 }
         )"));
-        return shader::create(std::move(v));
+        return shader_pipeline::create(std::move(v));
     }
 };
 
@@ -280,16 +283,16 @@ concept Drawable = requires(T t)
 template<Drawable T>
 struct shape {
     const T drawable;
-    const shader shader;
+    const shader_pipeline shader_pipeline;
     [[nodiscard]] bool
     check() const
     {
-        return shader.check();
+        return shader_pipeline.check();
     }
     void
     draw() const
     {
-        shader.use();
+        shader_pipeline.use();
         drawable.draw();
     }
 };
