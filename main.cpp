@@ -2,6 +2,7 @@
 
 #include <GLFW/glfw3.h>
 #include <iostream>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -30,62 +31,57 @@ struct non_copyable {
 };
 
 struct glfw: private non_copyable {
-    static glfw
+    static std::optional<glfw>
     instantiate()
     {
-        bool success = glfwInit() == GLFW_TRUE;
-        if (success) {
+        if (glfwInit() == GLFW_TRUE) {
             glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
             glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
             glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
             glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);// needed for mac
+            return std::make_optional<glfw>();
         }
-        return glfw{success};
+        std::cerr << "Failed to instantiate glfw" << std::endl;
+        return std::nullopt;
     }
-    const bool valid;
-    explicit glfw(bool valid) : valid(valid) {}
     ~glfw()
     {
-        if (valid) {
-            glfwTerminate();
-        }
+        glfwTerminate();
     }
 };
 
-struct glfw_window {
-    [[nodiscard]] static glfw_window
+struct glfw_window: private non_copyable {
+    static std::optional<glfw_window>
     create(const glfw &)
     {
-        return {glfwCreateWindow(800, 600, "LearnOpenGL", nullptr, nullptr)};
+        GLFWwindow *handle = glfwCreateWindow(800, 600, "LearnOpenGL", nullptr, nullptr);
+        if (handle) {
+            return std::make_optional<glfw_window>(handle);
+        }
+        std::cerr << "Failed to create GLFW window" << std::endl;
+        return std::nullopt;
     }
     GLFWwindow *const handle;
-    [[nodiscard]] bool
+    explicit glfw_window(GLFWwindow *handle) : handle(handle) {}
+    void
     make_current() const
     {
-        if (handle) {
-            glfwMakeContextCurrent(handle);
-        }
-        else {
-            std::cerr << "Failed to create GLFW window" << std::endl;
-        }
-        return handle != nullptr;
+        glfwMakeContextCurrent(handle);
+    }
+    ~glfw_window()
+    {
+        glfwDestroyWindow(handle);
     }
 };
 
 struct glad {
-    [[nodiscard]] static glad
-    initialise(const glfw &)
+    static std::optional<glad>
+    initialise(const glfw_window &w)
     {
-        return {static_cast<bool>(gladLoadGLLoader((GLADloadproc) glfwGetProcAddress))};
-    }
-    const bool valid;
-    [[nodiscard]] bool
-    check() const
-    {
-        if (!valid) {
-            std::cerr << "Failed to initialize GLAD" << std::endl;
-        }
-        return valid;
+        w.make_current();
+        if (gladLoadGLLoader((GLADloadproc) glfwGetProcAddress)) return std::make_optional<glad>();
+        std::cerr << "Failed to initialize GLAD" << std::endl;
+        return std::nullopt;
     }
 };
 
@@ -190,24 +186,17 @@ struct shader: private non_copyable {
         unsigned int shader_id = glCreateShader(shader_type);
         glShaderSource(shader_id, 1, &shaderSource, nullptr);
         glCompileShader(shader_id);
-        return std::make_unique<shader>(shader_id, name);
-    }
-    unsigned int shader_id;
-    std::string name;
-    shader(unsigned int shader_id, std::string name) : shader_id(shader_id), name(std::move(name)) {}
-    [[nodiscard]] bool
-    check() const
-    {
         int success;
         char info_log[512];
         glGetShaderiv(shader_id, GL_COMPILE_STATUS, &success);
-        if (!success) {
-            glGetShaderInfoLog(shader_id, sizeof info_log, nullptr, info_log);
-            std::cerr << "ERROR::SHADER::" << name << "::COMPILATION_FAILED\n"
-                      << info_log << std::endl;
-        }
-        return static_cast<bool>(success);
+        if (success) return std::make_unique<shader>(shader_id);
+        glGetShaderInfoLog(shader_id, sizeof info_log, nullptr, info_log);
+        std::cerr << "ERROR::SHADER::" << name << "::COMPILATION_FAILED\n"
+                  << info_log << std::endl;
+        return {};
     }
+    unsigned int shader_id;
+    explicit shader(unsigned int shader_id) : shader_id(shader_id) {}
     ~shader()
     {
         glDeleteShader(shader_id);
@@ -215,33 +204,26 @@ struct shader: private non_copyable {
 };
 
 struct shader_pipeline {
-    [[nodiscard]] static shader_pipeline
+    static std::optional<shader_pipeline>
     create(std::vector<std::unique_ptr<const shader>> &&shaders)
     {
-        unsigned int shaderProgram;
-        shaderProgram = glCreateProgram();
-        std::for_each(shaders.begin(), shaders.end(), [&](const auto &s) { glAttachShader(shaderProgram, s->shader_id); });
-        glLinkProgram(shaderProgram);
-        return {shaderProgram, std::move(shaders)};
-    }
-    const unsigned int shader_program_id;
-    mutable std::vector<std::unique_ptr<const shader>> shaders;
-    [[nodiscard]] bool
-    check() const
-    {
-        auto _ = guard{[this]() { shaders.clear(); }};
-        if (std::any_of(shaders.begin(), shaders.end(), [](const auto &s) { return !s->check(); }))
-            return false;
+        if (std::any_of(shaders.begin(), shaders.end(), [](const auto &s) { return !s; }))
+            return std::nullopt;
+        unsigned int shader_program_id;
+        shader_program_id = glCreateProgram();
+        std::for_each(shaders.begin(), shaders.end(), [&](const auto &s) { glAttachShader(shader_program_id, s->shader_id); });
+        glLinkProgram(shader_program_id);
         int success;
         char info_log[512];
         glGetProgramiv(shader_program_id, GL_COMPILE_STATUS, &success);
-        if (success == 0) {
-            glGetProgramInfoLog(shader_program_id, sizeof info_log, nullptr, info_log);
-            std::cerr << "ERROR::SHADER::PROGRAM::COMPILATION_FAILED\n"
-                      << info_log << std::endl;
-        }
-        return static_cast<bool>(success);
+        if (success) return std::make_optional<shader_pipeline>(shader_program_id);
+        glGetProgramInfoLog(shader_program_id, sizeof info_log, nullptr, info_log);
+        std::cerr << "ERROR::SHADER::PROGRAM::COMPILATION_FAILED\n"
+                  << info_log << std::endl;
+        return std::nullopt;
     }
+    const unsigned int shader_program_id;
+    explicit shader_pipeline(const unsigned int shaderProgramId) : shader_program_id(shaderProgramId) {}
     void
     use() const
     {
@@ -250,7 +232,7 @@ struct shader_pipeline {
 };
 
 struct triangle_shader {
-    [[nodiscard]] static shader_pipeline
+    static std::optional<shader_pipeline>
     create()
     {
         std::vector<std::unique_ptr<const shader>> v{};
@@ -284,11 +266,7 @@ template<Drawable T>
 struct shape {
     const T drawable;
     const shader_pipeline shader_pipeline;
-    [[nodiscard]] bool
-    check() const
-    {
-        return shader_pipeline.check();
-    }
+    shape(const T drawable, const struct shader_pipeline shaderPipeline) : drawable(drawable), shader_pipeline(shaderPipeline) {}
     void
     draw() const
     {
@@ -298,27 +276,31 @@ struct shape {
 };
 
 struct triangle {
-    [[nodiscard]] static shape<vertex_array>
+    static std::optional<shape<vertex_array>>
     create()
     {
-        auto vertex_array = vertex_array::create({-0.5f, -0.5f, 0.0f,
-                                                  0.5f, -0.5f, 0.0f,
-                                                  0.0f, 0.5f, 0.0f});
-        return {vertex_array, triangle_shader::create()};
+        auto array = vertex_array::create({-0.5f, -0.5f, 0.0f,
+                                           0.5f, -0.5f, 0.0f,
+                                           0.0f, 0.5f, 0.0f});
+        const auto &shader = triangle_shader::create();
+        if (shader) return std::make_optional<shape<vertex_array>>(array, *shader);
+        return std::nullopt;
     }
 };
 
 struct rectangle {
-    static shape<element_array>
+    static std::optional<shape<element_array>>
     create()
     {
-        auto element_array = element_array::create({0.5f, 0.5f, 0.0f,
-                                                    0.5f, -0.5f, 0.0f,
-                                                    -0.5f, -0.5f, 0.0f,
-                                                    -0.5f, 0.5f, 0.0f},
-                                                   {0, 1, 3,
-                                                    1, 2, 3});
-        return {element_array, triangle_shader::create()};
+        auto array = element_array::create({0.5f, 0.5f, 0.0f,
+                                            0.5f, -0.5f, 0.0f,
+                                            -0.5f, -0.5f, 0.0f,
+                                            -0.5f, 0.5f, 0.0f},
+                                           {0, 1, 3,
+                                            1, 2, 3});
+        const auto &shader = triangle_shader::create();
+        if (shader) return std::make_optional<shape<element_array>>(array, *shader);
+        return std::nullopt;
     }
 };
 
@@ -358,19 +340,20 @@ int
 main()
 {
     auto glfw = glfw::instantiate();
+    if (!glfw) return -1;
 
-    auto window = glfw_window::create(glfw);
-    if (!window.make_current()) return -1;
+    auto window = glfw_window::create(*glfw);
+    if (!window) return -2;
 
-    auto glad = glad::initialise(glfw);
-    if (!glad.check()) return -1;
+    auto glad = glad::initialise(*window);
+    if (!glad) return -3;
 
-    viewport::initialise(window);
+    auto viewport = viewport::initialise(*window);
 
     auto shape = triangle::create();
-    if (!shape.check()) return -1;
+    if (!shape) return -4;
 
-    render_loop(window, shape);
+    render_loop(*window, *shape);
 
     return 0;
 }
