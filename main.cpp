@@ -1,6 +1,7 @@
 #include <glad/glad.h>
 
 #include <GLFW/glfw3.h>
+#include <any>
 #include <iostream>
 #include <optional>
 #include <utility>
@@ -262,34 +263,37 @@ concept Drawable = requires(T t)
     t.draw();
 };
 
-template<Drawable T>
 struct shape {
-    const T drawable;
+    std::any drawable;
     const shader_pipeline shader_pipeline;
-    shape(const T drawable, const struct shader_pipeline shaderPipeline) : drawable(drawable), shader_pipeline(shaderPipeline) {}
+    template<Drawable T>
+    shape(const T drawable, const struct shader_pipeline shaderPipeline) : drawable(drawable), shader_pipeline(shaderPipeline), draw([this]() { std::any_cast<T>(this->drawable).draw(); }) {}
     void
-    draw() const
+    render() const
     {
         shader_pipeline.use();
-        drawable.draw();
+        draw();
     }
+
+private:
+    std::function<void()> draw;
 };
 
 struct triangle {
-    static std::optional<shape<vertex_array>>
+    static std::optional<shape>
     create()
     {
         auto array = vertex_array::create({-0.5f, -0.5f, 0.0f,
                                            0.5f, -0.5f, 0.0f,
                                            0.0f, 0.5f, 0.0f});
         const auto &shader = triangle_shader::create();
-        if (shader) return std::make_optional<shape<vertex_array>>(array, *shader);
+        if (shader) return std::make_optional<shape>(array, *shader);
         return std::nullopt;
     }
 };
 
 struct rectangle {
-    static std::optional<shape<element_array>>
+    static std::optional<shape>
     create()
     {
         auto array = element_array::create({0.5f, 0.5f, 0.0f,
@@ -299,7 +303,7 @@ struct rectangle {
                                            {0, 1, 3,
                                             1, 2, 3});
         const auto &shader = triangle_shader::create();
-        if (shader) return std::make_optional<shape<element_array>>(array, *shader);
+        if (shader) return std::make_optional<shape>(array, *shader);
         return std::nullopt;
     }
 };
@@ -319,15 +323,14 @@ clear_color_buffer()
     glClear(GL_COLOR_BUFFER_BIT);
 }
 
-template<typename T>
 void
-render_loop(const glfw_window &window, const shape<T> &shape)
+render_loop(const glfw_window &window, const std::vector<const shape> &shapes)
 {
     while (!glfwWindowShouldClose(window.handle)) {
         process_input(window);
 
         clear_color_buffer();
-        shape.draw();
+        std::for_each(shapes.begin(), shapes.end(), [](auto &s) { s.render(); });
 
         glfwSwapBuffers(window.handle);
         glfwPollEvents();
@@ -350,10 +353,15 @@ main()
     auto glad = glad::initialise(*window);
     if (!glad) return -3;
 
-    auto shape = rectangle::create();
+    std::vector<const shape> shapes{};
+    auto shape = triangle::create();
     if (!shape) return -4;
+    shapes.push_back(*shape);
+    auto shape2 = rectangle::create();
+    if (!shape2) return -5;
+    shapes.push_back(*shape2);
 
-    render_loop(*window, *shape);
+    render_loop(*window, shapes);
 
     return 0;
 }
