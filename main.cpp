@@ -78,7 +78,6 @@ struct glad {
     static std::optional<glad>
     initialise(const glfw_window &w)
     {
-        w.make_current();
         if (gladLoadGLLoader((GLADloadproc) glfwGetProcAddress)) return std::make_optional<glad>();
         std::cerr << "Failed to initialize GLAD" << std::endl;
         return std::nullopt;
@@ -89,6 +88,7 @@ struct viewport: private non_copyable {
     static viewport
     initialise(const glfw_window &w)
     {
+        w.make_current();
         glfwSetFramebufferSizeCallback(w.handle, viewport::framebuffer_size_callback);
         return viewport{w};
     }
@@ -122,7 +122,7 @@ requires(array_type == GL_ARRAY_BUFFER || array_type == GL_ELEMENT_ARRAY_BUFFER)
     {
         glBindBuffer(array_type, id);
         glBufferData(array_type, count * sizeof(T), data.data(), GL_STATIC_DRAW);
-        return guard{[]() { glBindBuffer(array_type, 0); }};
+        return guard{[]() { array_type == GL_ARRAY_BUFFER ? glBindBuffer(array_type, 0) : (void) 0; }};
     }
 };
 using vertex_buffer = buffer<GL_ARRAY_BUFFER, float>;
@@ -345,12 +345,12 @@ main()
     auto window = glfw_window::create(*glfw);
     if (!window) return -2;
 
+    auto viewport = viewport::initialise(*window);
+
     auto glad = glad::initialise(*window);
     if (!glad) return -3;
 
-    auto viewport = viewport::initialise(*window);
-
-    auto shape = triangle::create();
+    auto shape = rectangle::create();
     if (!shape) return -4;
 
     render_loop(*window, *shape);
